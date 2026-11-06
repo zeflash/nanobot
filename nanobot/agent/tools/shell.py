@@ -16,7 +16,7 @@ from urllib.parse import unquote
 
 from loguru import logger
 
-from nanobot.agent.tools.base import Tool, ToolResult
+from nanobot.agent.tools.base import Schema, Tool, ToolResult
 from nanobot.agent.tools.context import ToolContext, current_request_session_key
 from nanobot.agent.tools.exec_session import (
     DEFAULT_EXEC_SESSION_MANAGER,
@@ -97,8 +97,8 @@ class _PreparedCommand:
     login: bool
 
 
-def _exec_parameters(config: ExecToolConfig) -> dict[str, Any]:
-    return tool_parameters_schema(
+def _exec_parameters(config: ExecToolConfig, *, include_timeout_alias: bool = False) -> dict[str, Any]:
+    schema = tool_parameters_schema(
         command=StringSchema("The shell command to execute"),
         cmd=StringSchema("Compatibility alias for command"),
         working_dir=StringSchema("Optional working directory for the command"),
@@ -110,11 +110,6 @@ def _exec_parameters(config: ExecToolConfig) -> dict[str, Any]:
                 f"Explicit requests must not exceed {config.max_runtime_limit}s. "
                 "Output does not extend the budget."
             ),
-            minimum=1,
-            maximum=config.max_runtime_limit,
-        ),
-        timeout=IntegerSchema(
-            description="Compatibility alias for max_runtime; cannot be combined with it.",
             minimum=1,
             maximum=config.max_runtime_limit,
         ),
@@ -150,6 +145,13 @@ def _exec_parameters(config: ExecToolConfig) -> dict[str, Any]:
             nullable=True,
         ),
     )
+    if include_timeout_alias:
+        schema["properties"]["timeout"] = IntegerSchema(
+            description="Compatibility alias for max_runtime; cannot be combined with it.",
+            minimum=1,
+            maximum=config.max_runtime_limit,
+        ).to_json_schema()
+    return schema
 
 
 class ExecTool(Tool):
@@ -259,6 +261,16 @@ class ExecTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return _exec_parameters(self._exec_config)
 
+    def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._cast_object(params, _exec_parameters(self._exec_config, include_timeout_alias=True))
+
+    def validate_params(self, params: dict[str, Any]) -> list[str]:
+        if not isinstance(cast(object, params), dict):
+            return [f"parameters must be an object, got {type(params).__name__}"]
+        return Schema.validate_json_schema_value(
+            params, _exec_parameters(self._exec_config, include_timeout_alias=True), "",
+        )
+
     @property
     def timeout(self) -> int:
         return self._exec_config.max_runtime
@@ -278,7 +290,7 @@ class ExecTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Execute a shell command. timeout and max_runtime are mutually exclusive."
+        return "Execute a shell command. Use max_runtime for the hard runtime budget."
 
     @property
     def exclusive(self) -> bool:
