@@ -97,13 +97,15 @@ jobs:
           set -euo pipefail
           target="$IMAGE:sha-$GITHUB_SHA"
           docker tag "nanobot-fork:$GITHUB_SHA" "$target"
-          docker push "$target"
-          digest="$(docker image inspect "$target" --format '{{index .RepoDigests 0}}')"
-          test "${digest#"$IMAGE@sha256:"}" != "$digest"
+          docker push "$target" | tee "$RUNNER_TEMP/fork-image-push.log"
+          digest="$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' "$RUNNER_TEMP/fork-image-push.log" | tail -n 1)"
+          test "${#digest}" = 71
+          docker buildx imagetools inspect "$target" --raw > "$RUNNER_TEMP/fork-image-manifest.json"
+          test "sha256:$(sha256sum "$RUNNER_TEMP/fork-image-manifest.json" | cut -d ' ' -f 1)" = "$digest"
           {
             echo '## Tested candidate — not deployed'
             echo "Source: $GITHUB_SHA"
-            echo "Image: \`$digest\`"
+            echo "Image: \`$IMAGE@$digest\`"
             echo 'Platform: linux/amd64; channels: Slack, WebSocket'
             echo 'No production credentials, data, or deployment access used.'
           } >> "$GITHUB_STEP_SUMMARY"
