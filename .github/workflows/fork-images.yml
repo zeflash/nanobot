@@ -39,7 +39,7 @@ jobs:
           uv pip check
       - name: Validate selected corrections and channel contracts
         run: |
-          uv run --no-sync ruff check nanobot/agent/tools/shell.py tests/tools/test_exec_runtime_schema.py tests/tools/test_tool_descriptions.py .github/scripts/fork_image_smoke.py
+          uv run --no-sync ruff check nanobot/agent/tools/shell.py tests/tools/test_exec_runtime_schema.py tests/tools/test_tool_descriptions.py nanobot/channels/slack/runtime.py nanobot/channels/slack/tests/test_slack_channel.py .github/scripts/fork_image_smoke.py
           uv run --no-sync python -m scripts.check_import_boundaries
           uv run --no-sync python -m pytest -p no:cacheprovider -q \
             tests/tools/test_exec_runtime_schema.py \
@@ -82,8 +82,9 @@ jobs:
           test "$(docker image inspect "$candidate" --format '{{.Architecture}}')" = amd64
           test "$(docker image inspect "$candidate" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
           expected="$(sha256sum nanobot/agent/tools/shell.py | cut -d ' ' -f 1)"
+          expected_slack="$(sha256sum nanobot/channels/slack/runtime.py | cut -d ' ' -f 1)"
           docker run --rm -i --network none --user 1000:1000 --workdir /tmp \
-            --entrypoint python -e EXPECTED_SHELL_SHA="$expected" \
+            --entrypoint python -e EXPECTED_SHELL_SHA="$expected" -e EXPECTED_SLACK_SHA="$expected_slack" \
             "$candidate" -B - < .github/scripts/fork_image_smoke.py
       - name: Authenticate to GHCR after validation
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
