@@ -543,6 +543,96 @@ async def test_with_thread_context_fetches_replies_in_dm_thread() -> None:
     assert "- <@UA>: here is the file" in content
 
 
+@pytest.mark.parametrize(
+    ("event_type", "channel_type"),
+    [("message", "channel"), ("app_mention", "channel"), ("message", "im")],
+)
+@pytest.mark.asyncio
+async def test_bot_messages_without_subtype_are_acked_without_processing(
+    event_type: str, channel_type: str,
+) -> None:
+    bus = MessageBus()
+    channel = SlackChannel(SlackConfig(enabled=True, group_policy="open"), bus)
+    channel._bot_user_id = "UBOT"
+    fake_web = _FakeAsyncWebClient()
+    channel._web_client = fake_web
+    channel._download_slack_file = AsyncMock(return_value=(None, ""))  # type: ignore[method-assign]
+    client = SimpleNamespace(send_socket_mode_response=AsyncMock())
+    req = SimpleNamespace(
+        type="events_api",
+        envelope_id="env-bot",
+        payload={
+            "event": {
+                "type": event_type,
+                "bot_id": "BAPP",
+                "user": "UAPP",
+                "channel": "D123" if channel_type == "im" else "C123",
+                "channel_type": channel_type,
+                "text": (
+                    "<@UBOT> Home Assistant notification"
+                    if event_type == "app_mention" else "Home Assistant notification"
+                ),
+                "ts": "1700000000.000200",
+                "thread_ts": "1700000000.000100",
+                "files": [{"id": "F123", "name": "notification.png"}],
+            }
+        },
+    )
+
+    await channel._on_socket_request(client, req)
+
+    client.send_socket_mode_response.assert_awaited_once()
+    assert client.send_socket_mode_response.await_args.args[0].envelope_id == "env-bot"
+    assert bus.inbound_size == 0
+    assert fake_web.reactions_add_calls == []
+    assert fake_web.conversations_replies_calls == []
+    channel._download_slack_file.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("event_type", "group_policy", "text"),
+    [
+        ("message", "open", "hello"),
+        ("app_mention", "mention", "<@UBOT> hello"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_human_channel_messages_still_reach_agent(
+    event_type: str, group_policy: str, text: str,
+) -> None:
+    bus = MessageBus()
+    channel = SlackChannel(SlackConfig(enabled=True, group_policy=group_policy), bus)
+    channel._bot_user_id = "UBOT"
+    fake_web = _FakeAsyncWebClient()
+    channel._web_client = fake_web
+    client = SimpleNamespace(send_socket_mode_response=AsyncMock())
+    req = SimpleNamespace(
+        type="events_api",
+        envelope_id="env-human",
+        payload={
+            "event": {
+                "type": event_type,
+                "user": "U1",
+                "channel": "C123",
+                "channel_type": "channel",
+                "text": text,
+                "ts": "1700000000.000100",
+            }
+        },
+    )
+
+    await channel._on_socket_request(client, req)
+
+    client.send_socket_mode_response.assert_awaited_once()
+    assert bus.inbound_size == 1
+    message = bus.inbound.get_nowait()
+    assert message.content == "hello"
+    assert message.sender_id == "U1"
+    assert fake_web.reactions_add_calls == [
+        {"channel": "C123", "name": "eyes", "timestamp": "1700000000.000100"}
+    ]
+
+
 @pytest.mark.asyncio
 async def test_dm_root_message_has_no_thread_ts_and_no_thread_session() -> None:
     channel = SlackChannel(SlackConfig(enabled=True), MessageBus())

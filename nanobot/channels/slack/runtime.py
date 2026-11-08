@@ -430,6 +430,10 @@ class SlackChannel(BaseChannel):
         if event_type not in ("message", "app_mention"):
             return
 
+        # Modern Slack bot messages can have a user and no bot_message subtype.
+        if event.get("bot_id"):
+            return
+
         sender_id = event.get("user")
         chat_id = event.get("channel")
 
